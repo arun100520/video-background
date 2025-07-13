@@ -2,15 +2,30 @@ from flask import Flask, render_template, request, send_file
 import torch
 import cv2
 import os
+import requests
 from PIL import Image
 from torchvision.transforms.functional import to_tensor
 from model.model import MattingNetwork  # from RVM repo
 
 app = Flask(__name__)
 
-# Load model
+MODEL_URL = "https://huggingface.co/arun100520/robust-video-matting/resolve/main/rvm_mobilenetv3.pth"
+MODEL_PATH = "rvm_mobilenetv3.pth"
+
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        print("🔽 Downloading model from Hugging Face...")
+        r = requests.get(MODEL_URL, stream=True)
+        with open(MODEL_PATH, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        print("✅ Model downloaded!")
+
+# Download and load the model
+download_model()
 model = MattingNetwork("mobilenetv3")
-model.load_state_dict(torch.load("rvm_mobilenetv3.pth", map_location="cpu"))
+model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
 model = model.eval()
 
 def remove_background(video_path, output_path="static/output.mp4"):
@@ -24,8 +39,10 @@ def remove_background(video_path, output_path="static/output.mp4"):
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         src_tensor = to_tensor(Image.fromarray(rgb)).unsqueeze(0)
+
         with torch.no_grad():
             fgr, pha, *_ = model(src_tensor)
+
         pha_np = pha.squeeze().cpu().numpy()
         fgr_np = fgr.squeeze().permute(1, 2, 0).cpu().numpy()
 
@@ -34,6 +51,7 @@ def remove_background(video_path, output_path="static/output.mp4"):
         frames.append(comp)
 
     cap.release()
+
     h, w, _ = frames[0].shape
     out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (w, h))
     for frame in frames:
@@ -48,7 +66,7 @@ def index():
         video.save(input_path)
 
         remove_background(input_path)
-        return render_template("index.html", processed=True)
+        return render_template("index.html", processed=True, video_url="static/output.mp4")
 
     return render_template("index.html", processed=False)
 
